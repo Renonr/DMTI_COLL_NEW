@@ -20,6 +20,8 @@
 #include <QTextStream>
 #include <QFont>
 #include <QDateTime>
+#include <QMap>
+#include <QSizePolicy>
 
 #include "logic/natural.h"
 #include "logic/integer.h"
@@ -32,7 +34,7 @@ MainWindow::MainWindow(QWidget *parent)
     , ui(new Ui::MainWindow)
 {
     ui->setupUi(this);
-    setWindowTitle("Калькулятор коллоквиум");
+    setWindowTitle("Калькулятор алгоритмической арифметики");
     setMinimumSize(800, 600);
 
     auto *centralWidget = new QWidget(this);
@@ -77,7 +79,7 @@ MainWindow::MainWindow(QWidget *parent)
 
     saveButton = new QPushButton("💾 Сохранить результат", this);
     saveButton->setMinimumWidth(150);
-    saveButton->setEnabled(false);  // ✅ Неактивна, пока нет результата
+    saveButton->setEnabled(false);
     saveButton->setToolTip("Сохранить результат в текстовый файл");
     actionLayout->addWidget(saveButton);
     actionLayout->addStretch();
@@ -88,7 +90,7 @@ MainWindow::MainWindow(QWidget *parent)
     resultDisplay->setMinimumHeight(80);
     resultDisplay->setMaximumHeight(200);
     resultDisplay->setLineWrapMode(QTextEdit::WidgetWidth);
-    resultDisplay->setFont(QFont("Consolas", 10));  // ✅ Моноширинный шрифт
+    resultDisplay->setFont(QFont("Consolas", 10));
     resultDisplay->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
     resultDisplay->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
 
@@ -109,7 +111,7 @@ MainWindow::MainWindow(QWidget *parent)
     connect(ui->funcComboBox, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &MainWindow::onFunctionChanged);
     connect(ui->calcButton, &QPushButton::clicked, this, &MainWindow::onCalculate);
-    connect(saveButton, &QPushButton::clicked, this, &MainWindow::onSaveToFile);  // ✅ Новая кнопка
+    connect(saveButton, &QPushButton::clicked, this, &MainWindow::onSaveToFile);
 }
 
 MainWindow::~MainWindow()
@@ -205,7 +207,6 @@ void MainWindow::onCalculate()
         lastResult = result;
         saveButton->setEnabled(true);
 
-        // Прокрутка в начало
         QTextCursor cursor = resultDisplay->textCursor();
         cursor.setPosition(0);
         resultDisplay->setTextCursor(cursor);
@@ -233,7 +234,7 @@ void MainWindow::onSaveToFile()
         );
 
     if (fileName.isEmpty()) {
-        return;  // Пользователь отменил
+        return;
     }
 
     QFile file(fileName);
@@ -304,7 +305,8 @@ void MainWindow::createFields(const QStringList &labels, const QString &type)
     else if (type == "Rational")
         rx.setPattern("^-?(0|[1-9][0-9]*)/[1-9][0-9]*$");
     else if (type == "Polynomial")
-        rx.setPattern(R"(^(-?(0|[1-9][0-9]*)/[1-9][0-9]*|-?(0|[1-9][0-9]*))(\s+(-?(0|[1-9][0-9]*)/[1-9][0-9]*|-?(0|[1-9][0-9]*)))*$)");
+        // ✅ Расширенная регулярка для поддержки разреженного формата
+        rx.setPattern(R"(^(\s*(-?(\d+|\d+/\d+|(\d+)?x(\^\d+)?|\d+@\d+)))+\s*$)");
 
     auto *validator = new QRegularExpressionValidator(rx, this);
 
@@ -313,12 +315,17 @@ void MainWindow::createFields(const QStringList &labels, const QString &type)
         edit->setValidator(validator);
         edit->setPlaceholderText(label);
 
-        // ✅ Адаптивная ширина полей
         if (type == "Polynomial") {
             edit->setMinimumWidth(300);
             edit->setMaximumWidth(600);
             edit->setFont(QFont("Consolas", 10));
-            edit->setToolTip("Ввод: коэффициенты через пробел, от старшей степени. Пример: '1 0 -1' = x² - 1");
+            edit->setToolTip(
+                "Форматы ввода многочленов:\n"
+                "• Плотный: '1 0 -1' = 1·x² + 0·x - 1\n"
+                "• Разреженный: '1x^100 -1' = x¹⁰⁰ - 1\n"
+                "• Через @: '1@100 -1@0' = x¹⁰⁰ - 1\n"
+                "• Смешанный: '2x^5 3@2 -1' = 2x⁵ + 3x² - 1"
+                );
         } else {
             edit->setMinimumWidth(150);
             edit->setMaximumWidth(300);
@@ -341,7 +348,27 @@ RationalNumber MainWindow::parseRational(const QString &s)
     return RationalNumber(s, "1");
 }
 
+// 🔹 Главный парсер: определяет формат и делегирует
 PolynomialNumber MainWindow::parsePolynomial(const QString &s) {
+    QString clean = s.trimmed().simplified();
+    if (clean.isEmpty()) {
+        return PolynomialNumber();
+    }
+
+    // Определяем формат по наличию спецсимволов
+    bool isSparse = clean.contains('@') ||
+                    clean.contains('^') ||
+                    clean.contains('x', Qt::CaseInsensitive);
+
+    if (isSparse) {
+        return parsePolynomialSparse(clean);
+    } else {
+        return parsePolynomialDense(clean);
+    }
+}
+
+// 🔹 Парсер плотного формата (старый): "1 0 -1"
+PolynomialNumber MainWindow::parsePolynomialDense(const QString &s) {
     QStringList coeffStrs = s.split(' ', Qt::SkipEmptyParts);
     if (coeffStrs.isEmpty()) {
         return PolynomialNumber();
@@ -355,6 +382,91 @@ PolynomialNumber MainWindow::parsePolynomial(const QString &s) {
     PolynomialNumber result;
     result.degree = static_cast<int>(coeffs.size()) - 1;
     result.coefficients = coeffs;
+    return result;
+}
+
+// 🔹 Парсер разреженного формата (новый): "1x^100 -1", "1@100 -1@0"
+PolynomialNumber MainWindow::parsePolynomialSparse(const QString &s) {
+    QMap<int, RationalNumber> terms;  // степень → коэффициент
+    int maxDegree = 0;
+
+    // Разбиваем входную строку на отдельные члены по пробелам
+    // Но сначала нормализуем: заменяем " + " и " - " на " +-" для корректного сплита
+    QString normalized = s;
+    normalized.replace(" - ", " +-");
+    normalized.replace("+", " ");
+
+    QStringList tokens = normalized.split(' ', Qt::SkipEmptyParts);
+
+    for (const QString &token : tokens) {
+        QString t = token.trimmed();
+        if (t.isEmpty()) continue;
+
+        int degree = 0;
+        RationalNumber coeff("0", "1");
+        bool parsed = false;
+
+        // 📌 Формат 1: "коэф@степень" (например: "1@100", "-2@5")
+        if (t.contains('@')) {
+            QStringList parts = t.split('@');
+            if (parts.size() == 2) {
+                coeff = parseRational(parts[0]);
+                degree = parts[1].toInt();
+                parsed = true;
+            }
+        }
+        // 📌 Формат 2: "коэфx^степень" или "коэфxстепень" или "x^степень"
+        else if (t.contains('x', Qt::CaseInsensitive)) {
+            int xPos = t.indexOf('x', 0, Qt::CaseInsensitive);
+            QString coeffStr = t.left(xPos).trimmed();
+            QString powerStr = t.mid(xPos + 1).trimmed();
+
+            // Убираем '^' если есть
+            powerStr.replace("^", "");
+
+            // Парсим коэффициент
+            if (coeffStr.isEmpty() || coeffStr == "+" || coeffStr == "") {
+                coeff = RationalNumber("1", "1");
+            } else if (coeffStr == "-") {
+                coeff = RationalNumber("-1", "1");
+            } else {
+                coeff = parseRational(coeffStr);
+            }
+
+            // Парсим степень
+            if (powerStr.isEmpty()) {
+                degree = 1;  // "x" = x^1
+            } else {
+                degree = powerStr.toInt();
+            }
+            parsed = true;
+        }
+        // 📌 Формат 3: просто число (константа, степень 0)
+        else {
+            coeff = parseRational(t);
+            degree = 0;
+            parsed = true;
+        }
+
+        if (parsed) {
+            terms[degree] = coeff;
+            if (degree > maxDegree) maxDegree = degree;
+        }
+    }
+
+    // Создаём вектор коэффициентов [старшая → младшая степень]
+    PolynomialNumber result;
+    result.degree = maxDegree;
+    result.coefficients.resize(maxDegree + 1, RationalNumber("0", "1"));
+
+    for (auto it = terms.constBegin(); it != terms.constEnd(); ++it) {
+        int deg = it.key();
+        RationalNumber coeff = it.value();
+        int idx = maxDegree - deg;  // Индекс в векторе
+        if (idx >= 0 && idx < result.coefficients.size()) {
+            result.coefficients[idx] = coeff;
+        }
+    }
 
     return result;
 }
