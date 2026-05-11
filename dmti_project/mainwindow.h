@@ -47,6 +47,8 @@ private:
     RationalNumber parseRational(const QString &s);
     PolynomialNumber parsePolynomial(const QString &s);
     QString executeOperation(const QString &type, const QString &func, const QStringList &inputs);
+    PolynomialNumber parsePolynomialDense(const QString &s);
+    PolynomialNumber parsePolynomialSparse(const QString &s);
 
     Ui::MainWindow *ui;
     QFormLayout *dynamicLayout;
