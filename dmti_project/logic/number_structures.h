@@ -149,14 +149,45 @@ struct PolynomialNumber {
 
     QString toString() const {
         if (coefficients.empty()) return "0";
+
         QString res;
+        bool firstTerm = true;
+
         for (int i = 0; i <= degree; ++i) {
-            QString coeffStr = coefficients[i].toString();
+            const RationalNumber &coeff = coefficients[i];
             int power = degree - i;
-            res += "(" + coeffStr + ")";
-            if (power > 0) { res += "x^" + QString::number(power) + " + "; }
+
+            if (coeff.numerator.toString() == "0") continue;
+
+            if (!firstTerm) {
+                res += coeff.numerator.is_neg ? " - " : " + ";
+            } else if (coeff.numerator.is_neg) {
+                res += "-";
+            }
+
+            QString num = coeff.numerator.toString();
+            QString den = coeff.denominator.toString();
+            bool isUnity = (num == "1" && den == "1");
+            bool isNegUnity = (num == "-1" && den == "1");
+
+            if (!isUnity && !isNegUnity) {
+                if (den == "1") {
+                    res += num;
+                } else {
+                    res += "(" + num + "/" + den + ")";
+                }
+            }
+
+            if (power > 0) {
+                if (!isUnity && !isNegUnity) res += "·";
+                res += "x";
+                if (power > 1) res += "^" + QString::number(power);
+            }
+
+            firstTerm = false;
         }
-        return res;
+
+        return firstTerm ? "0" : res;
     }
 
     friend bool operator==(const PolynomialNumber &a, const PolynomialNumber &b) {
