@@ -157,37 +157,59 @@ struct PolynomialNumber {
             const RationalNumber &coeff = coefficients[i];
             int power = degree - i;
 
-            if (coeff.numerator.toString() == "0") continue;
-
-            if (!firstTerm) {
-                res += coeff.numerator.is_neg ? " - " : " + ";
-            } else if (coeff.numerator.is_neg) {
-                res += "-";
+            if (coeff.numerator.toString() == "0") {
+                continue;
             }
 
-            QString num = coeff.numerator.toString();
-            QString den = coeff.denominator.toString();
-            bool isUnity = (num == "1" && den == "1");
-            bool isNegUnity = (num == "-1" && den == "1");
+            bool isNegative = coeff.numerator.is_neg;
 
-            if (!isUnity && !isNegUnity) {
-                if (den == "1") {
-                    res += num;
+            if (!firstTerm) {
+                if (isNegative) {
+                    res += " - ";
                 } else {
-                    res += "(" + num + "/" + den + ")";
+                    res += " + ";
+                }
+            } else {
+                if (isNegative) {
+                    res += "-";
+                }
+            }
+
+            QString numStr = coeff.numerator.toString();
+            QString denStr = coeff.denominator.toString();
+
+            if (isNegative && numStr.startsWith("-")) {
+                numStr = numStr.mid(1);
+            }
+
+            bool isUnity = (numStr == "1" && denStr == "1");
+
+            if (!isUnity || power == 0) {
+                if (denStr == "1") {
+                    res += numStr;
+                } else {
+                    res += "(" + numStr + "/" + denStr + ")";
                 }
             }
 
             if (power > 0) {
-                if (!isUnity && !isNegUnity) res += "·";
+                if (!isUnity) {
+                    res += "·";
+                }
                 res += "x";
-                if (power > 1) res += "^" + QString::number(power);
+                if (power > 1) {
+                    res += "^" + QString::number(power);
+                }
             }
 
             firstTerm = false;
         }
 
-        return firstTerm ? "0" : res;
+        if (firstTerm) {
+            return "0";
+        }
+
+        return res;
     }
 
     friend bool operator==(const PolynomialNumber &a, const PolynomialNumber &b) {
